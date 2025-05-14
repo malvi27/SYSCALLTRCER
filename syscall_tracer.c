@@ -4,6 +4,7 @@
 #include <sys/user.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h> // For timestamps
 
 // Array of common system call names
 const char* syscall_names[] = {
@@ -38,9 +39,29 @@ const char* syscall_names[] = {
 
 #define MAX_SYSCALLS 330
 
+// Function to get the current timestamp
+char* get_timestamp() {
+    static char timestamp[20];
+    time_t raw_time;
+    struct tm *time_info;
+
+    time(&raw_time);
+    time_info = localtime(&raw_time);
+
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", time_info);
+    return timestamp;
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         printf("Usage: %s <target_program>\n", argv[0]);
+        return 1;
+    }
+
+    // Open a log file
+    FILE *log_file = fopen("syscall_log.txt", "w");
+    if (!log_file) {
+        perror("Failed to open log file");
         return 1;
     }
 
@@ -48,6 +69,7 @@ int main(int argc, char *argv[]) {
 
     if (child_pid < 0) {
         perror("fork failed");
+        fclose(log_file);
         return 1;
     }
 
@@ -56,6 +78,7 @@ int main(int argc, char *argv[]) {
         ptrace(PTRACE_TRACEME, 0, NULL, NULL);
         execl(argv[1], argv[1], (char *)NULL);
         perror("execl failed"); // If execl fails
+        fclose(log_file);
         return 1;
     } else {
         // Parent process: Trace the child
@@ -72,16 +95,21 @@ int main(int argc, char *argv[]) {
             ptrace(PTRACE_GETREGS, child_pid, NULL, &regs);
 
             long syscall_num = regs.orig_rax;
+            char *timestamp = get_timestamp();
+
             if (syscall_num >= 0 && syscall_num < MAX_SYSCALLS) {
-                printf("Traced system call: %s\n", syscall_names[syscall_num]);
+                printf("[%s] Traced system call: %s\n", timestamp, syscall_names[syscall_num]);
+                fprintf(log_file, "[%s] Traced system call: %s\n", timestamp, syscall_names[syscall_num]);
             } else {
-                printf("Traced unknown system call: %ld\n", syscall_num);
+                printf("[%s] Traced unknown system call: %ld\n", timestamp, syscall_num);
+                fprintf(log_file, "[%s] Traced unknown system call: %ld\n", timestamp, syscall_num);
             }
 
             ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL); // Continue tracing
         }
 
         ptrace(PTRACE_DETACH, child_pid, NULL, NULL); // Detach from the child
+        fclose(log_file); // Close the log file
     }
 
     return 0;
